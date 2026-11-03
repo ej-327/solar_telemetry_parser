@@ -1,0 +1,7 @@
+*.jou
+*.log
+*.str
+*.dcp
+*.bit
+.Xil/
+project_*/
