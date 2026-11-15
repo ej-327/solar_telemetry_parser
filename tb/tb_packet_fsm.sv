@@ -18,6 +18,10 @@ module tb_packet_fsm;
     logic       tb_Checksum_Err;
     logic       tb_ID_Err;
     
+    logic       prev_Pkt_Valid = 1'b0;
+    
+    int tests_passed = 0;
+    
     //Device Under Test
     packet_fsm dut (
         
@@ -49,8 +53,66 @@ module tb_packet_fsm;
         
     endtask
     
+    task automatic send_packet_gapless(
+        input logic [7:0] sensor_id,
+        input logic [15:0] measurement
+    );
+    
+        logic [7:0] checksum;
+        
+        checksum = sensor_id ^ measurement[15:8] ^ measurement[7:0];
+        
+        @(negedge tb_Clock);
+        tb_Rx_Byte = 8'h1A;
+        tb_Rx_DV   = 1'b1;
+        
+        @(negedge tb_Clock);
+        tb_Rx_Byte = 8'hCF;
+        
+        @(negedge tb_Clock);
+        tb_Rx_Byte = sensor_id;
+
+        @(negedge tb_Clock);
+        tb_Rx_Byte = measurement[15:8];
+
+        @(negedge tb_Clock);
+        tb_Rx_Byte = measurement[7:0];
+
+        @(negedge tb_Clock);
+        tb_Rx_Byte = checksum;
+
+        @(negedge tb_Clock);
+        tb_Rx_DV = 1'b0;
+
+    endtask
+    
     //100 MHz clock
     always #5 tb_Clock = ~tb_Clock;
+    
+    always @(posedge tb_Clock) begin
+        
+        #1;
+        
+        if (tb_Reset) begin
+            prev_Pkt_Valid = 1'b0;
+        end
+        else begin
+        
+            if (tb_Pkt_Valid === 1'b1 && prev_Pkt_Valid === 1'b1)
+                $fatal(1, "FAIL: Packet valid lasted multiple cycles.");
+            
+            //succesful packet can't report error
+            if (tb_Pkt_Valid === 1'b1 && (tb_Checksum_Err !== 1'b0 || tb_ID_Err !== 1'b0))
+                $fatal(1, "FAIL: Valid packet and error asserted together");
+            
+            prev_Pkt_Valid = tb_Pkt_Valid;
+            
+        end
+    end
+        
+        
+        
+        
     
     initial begin
     
@@ -104,6 +166,7 @@ module tb_packet_fsm;
             
         $display("PASS: Packet valid pulse width correct");
             
+        tests_passed++;
             
             
             
@@ -142,6 +205,7 @@ module tb_packet_fsm;
             
         $display("PASS: Checksum error pulse width correct");
         
+        tests_passed++;
         
         
         
@@ -171,7 +235,7 @@ module tb_packet_fsm;
             
         $display("PASS: Invalid sensor ID rejected correctly");
         
-        
+        tests_passed++;
         
         
         
@@ -220,6 +284,7 @@ module tb_packet_fsm;
         if (tb_Pkt_Valid !== 1'b0)
             $fatal(1, "FAIL: Recovery packet valid pulse too long)");
               
+        tests_passed++;
               
               
               
@@ -260,6 +325,9 @@ module tb_packet_fsm;
             $fatal(1, "FAIL: Abandoned packet changed outputs");
             
         $display("PASS: Abandoned packet ignored");
+       
+       tests_passed++;
+       
        
        
        
@@ -307,8 +375,6 @@ module tb_packet_fsm;
         if (tb_Checksum_Err !== 1'b0 || tb_ID_Err !== 1'b0)
             $fatal(1, "FAIL: Unexpected error in Packet B");
         
-        $display("PASS: Consecutive packets accepted");
-        
         
         $display("PASS: Consecutive packets accepted");
 
@@ -320,7 +386,54 @@ module tb_packet_fsm;
 
         $display("PASS: Packet B valid pulse correct");
 
-        $finish;
+        tests_passed++;
+        
+        
+        
+        
+        
+        
+        
+        // Test 7: Gapless packet transmission
+        send_packet_gapless(8'h02, 16'h01F4);
+
+        // Verify successful reception
+        if (tb_Pkt_Valid !== 1'b1)
+            $fatal(1, "FAIL: Gapless packet rejected");
+
+        // Verify ID and measurement
+        if (tb_Sensor_ID !== 8'h02 || tb_Pkt_Data !== 16'h01F4)
+            $fatal(1, "FAIL: Gapless packet data incorrect");
+
+        // No errors should be reported
+        if (tb_Checksum_Err !== 1'b0 || tb_ID_Err !== 1'b0)
+            $fatal(1, "FAIL: Gapless packet generated an error");
+
+        $display("PASS: Gapless packet accepted correctly");
+
+        // Confirm the valid pulse clears
+        @(negedge tb_Clock);
+
+        if (tb_Pkt_Valid !== 1'b0)
+            $fatal(1, "FAIL: Gapless valid pulse too long");
+
+        $display("PASS: Gapless packet valid pulse correct");
+
+        tests_passed++;
+        
+        
+        // Final regression summary
+        $display("--------------------------------");
+        $display("PACKET FSM REGRESSION SUMMARY");
+        $display("Tests Passed: %0d / 7", tests_passed);
+
+        if (tests_passed !== 7)
+            $fatal(1, "FAIL: Incomplete regression");
+
+        $display("RESULT: ALL TESTS PASSED");
+        $display("--------------------------------");
+
+     $finish;
         
      
         
